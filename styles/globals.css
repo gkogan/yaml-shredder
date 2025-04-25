@@ -1,0 +1,38 @@
+.dagger-editor-row {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.dagger-editor-col {
+  flex: 1 1 0;
+  min-width: 320px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.dagger-editor-col label {
+  margin-bottom: 4px;
+}
+.dagger-editor-monaco {
+  width: 100% !important;
+  min-width: 0;
+  flex: 1 1 0;
+}
+/* Monaco editor internal fix */
+.dagger-editor-monaco .monaco-editor,
+.dagger-editor-monaco .monaco-editor-background,
+.dagger-editor-monaco .overflow-guard {
+  width: 100% !important;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.dagger-editor-monaco .monaco-editor,
+.dagger-editor-monaco .monaco-editor-background,
+.dagger-hero {
+  background: none !important;
+  background-image: none !important;
+  color: #191826;
+  border-radius: 0 0 32px 32px;
+  padding: 32px 0 14px 0;
+}
