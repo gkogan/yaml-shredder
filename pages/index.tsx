@@ -1,5 +1,5 @@
 import Head from 'next/head';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import dynamic from "next/dynamic";
 import confetti from "canvas-confetti";
 import { convertYamlToDagger } from "../src/lib/convert";
