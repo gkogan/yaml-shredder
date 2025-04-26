@@ -1,8 +1,11 @@
-import { ErrorBoundary } from "../src/components/ErrorBoundary";
-import { useState } from "react";
+import Head from 'next/head';
+import { useState, useEffect } from 'react';
 import dynamic from "next/dynamic";
 import confetti from "canvas-confetti";
 import { convertYamlToDagger } from "../src/lib/convert";
+import { ChevronDownIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline';
+import path from 'path';
+import fs from 'fs';
 
 const MonacoEditor = dynamic(() => import("../src/components/Editor"), { ssr: false });
 
@@ -12,8 +15,14 @@ const DOC_LINKS = {
   typescript: "https://docs.dagger.io/sdk/typescript/",
 };
 
-export default function Home() {
-  const [yaml, setYaml] = useState("");
+interface Props {
+  basicYaml: string;
+  intermediateYaml: string;
+  gnarlyYaml: string;
+}
+
+export default function Home({ basicYaml, intermediateYaml, gnarlyYaml }: Props) {
+  const [yaml, setYaml] = useState<string>('');
   const [language, setLanguage] = useState<'go' | 'python' | 'typescript'>("go");
   const [code, setCode] = useState("");
   const [locSaved, setLocSaved] = useState<number | null>(null);
@@ -50,19 +59,20 @@ export default function Home() {
   }
 
   function insertSample(type: 'basic' | 'intermediate' | 'gnarly') {
-    if (type === 'basic') setYaml(samples.basic);
-    else if (type === 'intermediate') setYaml(samples.intermediate);
-    else if (type === 'gnarly') setYaml(samples.gnarly);
+    if (type === 'basic') setYaml(basicYaml);
+    else if (type === 'intermediate') setYaml(intermediateYaml);
+    else if (type === 'gnarly') setYaml(gnarlyYaml);
   }
 
-  const samples = {
-    basic: 'name: Basic Node.js CI (Verbose)\n\non:\n  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main, develop]\n  workflow_dispatch:\n  schedule:\n    - cron: \'0 2 * * 0\'\n\njobs:\n  setup:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout code\n        uses: actions/checkout@v4\n      - name: Set up Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: \'20\'\n      - name: Cache node modules\n        uses: actions/cache@v4\n        with:\n          path: ~/.npm\n          key: ${{ runner.os }}-node-${{ hashFiles(\'**/package-lock.json\') }}\n          restore-keys: |\n            ${{ runner.os }}-node-\n      - name: Install dependencies\n        run: npm ci\n      - name: Install dev dependencies\n        run: npm install --only=dev\n  lint:\n    runs-on: ubuntu-latest\n    needs: setup\n    steps:\n      - name: Lint code\n        run: npm run lint\n      - name: Lint docs\n        run: npm run lint:docs\n  test:\n    runs-on: ubuntu-latest\n    needs: [setup, lint]\n    steps:\n      - name: Run unit tests\n        run: npm run test:unit\n      - name: Run integration tests\n        run: npm run test:integration\n      - name: Upload test results\n        uses: actions/upload-artifact@v4\n        with:\n          name: test-results\n          path: test-results/\n      - name: Upload coverage report\n        uses: actions/upload-artifact@v4\n        with:\n          name: coverage-xml\n          path: coverage.xml\n  build:\n    runs-on: ubuntu-latest\n    needs: [lint, test]\n    steps:\n      - name: Build project\n        run: npm run build\n      - name: Upload build artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n  deploy:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - name: Deploy to production\n        run: ./scripts/deploy.sh\n      - name: Notify Slack\n        uses: slackapi/slack-github-action@v1\n        with:\n          payload: \'{"text":"Production deploy completed!"}\'\n      - name: Create GitHub Release\n        uses: softprops/action-gh-release@v1\n        with:\n          files: dist/**\n  notify:\n    runs-on: ubuntu-latest\n    needs: [deploy]\n    steps:\n      - name: Send notification\n        run: echo "Full pipeline finished."\n',
-    intermediate: 'name: Python Package CI (Verbose)\n\non:\n  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main, develop]\n  schedule:\n    - cron: \'0 0 * * 0\'\n\njobs:\n  setup:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout code\n        uses: actions/checkout@v4\n      - name: Set up Python\n        uses: actions/setup-python@v4\n        with:\n          python-version: \'3.11\'\n      - name: Cache pip\n        uses: actions/cache@v4\n        with:\n          path: ~/.cache/pip\n          key: ${{ runner.os }}-pip-${{ hashFiles(\'**/requirements.txt\') }}\n          restore-keys: |\n            ${{ runner.os }}-pip-\n      - name: Install dependencies\n        run: pip install -r requirements.txt\n      - name: Install dev dependencies\n        run: pip install -r dev-requirements.txt\n  format:\n    runs-on: ubuntu-latest\n    needs: setup\n    steps:\n      - name: Format code\n        run: black --check src/\n  lint:\n    runs-on: ubuntu-latest\n    needs: setup\n    steps:\n      - name: Lint code\n        run: flake8 src/\n      - name: Type check\n        run: mypy src/\n  test:\n    runs-on: ubuntu-latest\n    needs: [setup, lint]\n    steps:\n      - name: Run tests\n        run: pytest --cov=src/ --cov-report=xml\n      - name: Upload coverage report\n        uses: actions/upload-artifact@v4\n        with:\n          name: coverage-xml\n          path: coverage.xml\n      - name: Upload test results\n        uses: actions/upload-artifact@v4\n        with:\n          name: test-results\n          path: .pytest_cache/\n  build:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - name: Build package\n        run: python setup.py sdist bdist_wheel\n      - name: Upload dist\n        uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n      - name: Publish package\n        run: twine upload dist/*\n  release:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - name: Create GitHub Release\n        uses: softprops/action-gh-release@v1\n        with:\n          files: dist/**\n  notify:\n    runs-on: ubuntu-latest\n    needs: [release]\n    steps:\n      - name: Notify team\n        run: echo "Release pipeline finished."\n',
-    gnarly: 'name: Monorepo CI/CD (Verbose)\n\non:\n  push:\n    branches: [main, develop, staging, release]\n  pull_request:\n    branches: [main, develop, staging]\n  workflow_dispatch:\n  schedule:\n    - cron: \'0 1 * * 1\'\n\njobs:\n  install:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v4\n      - name: Set up Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: \'20\'\n      - name: Cache node modules\n        uses: actions/cache@v4\n        with:\n          path: ~/.npm\n          key: ${{ runner.os }}-node-${{ hashFiles(\'**/package-lock.json\') }}\n          restore-keys: |\n            ${{ runner.os }}-node-\n      - name: Install dependencies\n        run: npm ci\n  lint:\n    runs-on: ubuntu-latest\n    needs: install\n    steps:\n      - name: Lint code\n        run: npm run lint\n      - name: Lint docs\n        run: npm run lint:docs\n  test:\n    runs-on: ubuntu-latest\n    needs: install\n    steps:\n      - name: Run unit tests\n        run: npm run test:unit\n      - name: Run integration tests\n        run: npm run test:integration\n      - name: Upload test results\n        uses: actions/upload-artifact@v4\n        with:\n          name: test-results\n          path: test-results/\n      - name: Upload coverage report\n        uses: actions/upload-artifact@v4\n        with:\n          name: coverage-xml\n          path: coverage.xml\n  build:\n    runs-on: ubuntu-latest\n    needs: [lint, test]\n    steps:\n      - name: Build project\n        run: npm run build\n      - name: Upload build artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n  deploy_staging:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - name: Deploy to staging\n        run: ./scripts/deploy-staging.sh\n      - name: Notify Slack\n        uses: slackapi/slack-github-action@v1\n        with:\n          payload: \'{"text":"Staging deploy completed!"}\'\n  deploy_prod:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - name: Deploy to production\n        run: ./scripts/deploy-prod.sh\n      - name: Notify Slack\n        uses: slackapi/slack-github-action@v1\n        with:\n          payload: \'{"text":"Production deploy completed!"}\'\n      - name: Create GitHub Release\n        uses: softprops/action-gh-release@v1\n        with:\n          files: dist/**\n  notify:\n    runs-on: ubuntu-latest\n    needs: [deploy_prod]\n    steps:\n      - name: Send notification\n        run: echo "Full monorepo pipeline finished."\n'
-  };
+  function handleLanguageChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setLanguage(e.target.value as 'go' | 'python' | 'typescript');
+  }
 
   return (
-    <ErrorBoundary>
+    <div>
+      <Head>
+        <title>YAML Shredder</title>
+      </Head>
       <main style={{ minHeight: '100vh', background: '#f6f4ef' }}>
         {/* Hero Section */}
         <section className="dagger-hero" style={{ color: '#191826', borderRadius: '0 0 32px 32px', padding: '32px 0 14px 0', textAlign: 'center' }}>
@@ -75,11 +85,29 @@ export default function Home() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 12px 1fr', gap: 0, alignItems: 'start' }}>
             <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0', paddingRight: 12, width: '100%' }}>
               {/* Insert Sample Section */}
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontSize: 17, color: '#191826', marginRight: 4, fontWeight: 500 }}>Insert sample:</span>
-                <a href="#" className="sample-pill" onClick={e => { e.preventDefault(); insertSample('basic'); }}>Basic Node.js CI</a>
-                <a href="#" className="sample-pill" onClick={e => { e.preventDefault(); insertSample('intermediate'); }}>Intermediate Python Package</a>
-                <a href="#" className="sample-pill" onClick={e => { e.preventDefault(); insertSample('gnarly'); }}>Monorepo CI/CD</a>
+              <div className="mt-4 text-sm text-gray-500">
+                Insert sample:{" "}
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); insertSample('basic'); }}
+                  className="inline-block bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium hover:bg-blue-200 mr-2 mb-2"
+                >
+                  Basic Node.js CI
+                </a>
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); insertSample('intermediate'); }}
+                  className="inline-block bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-medium hover:bg-green-200 mr-2 mb-2"
+                >
+                  Intermediate Python Package CI
+                </a>
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); insertSample('gnarly'); }}
+                  className="inline-block bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-medium hover:bg-purple-200 mr-2 mb-2"
+                >
+                  Gnarly Monorepo CI/CD
+                </a>
               </div>
               <label style={{ marginBottom: 6, fontWeight: 700, fontSize: 18 }}>GitHub Actions YAML</label>
               <div style={{ flex: 1, width: '100%', minHeight: 0 }}>
@@ -108,35 +136,41 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {/* Actions */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, margin: '24px 0 0 0' }}>
-            <select
-              value={language}
-              onChange={e => setLanguage(e.target.value as 'go' | 'python' | 'typescript')}
-              className="shred-btn"
-              style={{ fontWeight: 700 }}
-            >
-              <option value="go">Go</option>
-              <option value="python">Python</option>
-              <option value="typescript">TypeScript</option>
-            </select>
+          {/* Action Buttons Section */}
+          <div className="dagger-actions flex items-center gap-4 mt-8 flex-wrap">
+            {/* Language Selection Dropdown */}
+            <div className="relative inline-block">
+              <select
+                value={language}
+                onChange={handleLanguageChange}
+                className="rounded border border-sky-200 px-5 py-2 text-base bg-sky-50 text-sky-700 font-semibold transition hover:border-sky-400 focus:border-sky-400 focus:outline-none appearance-none pr-8"
+              >
+                <option value="go">Go</option>
+                <option value="typescript">TypeScript</option>
+                <option value="python">Python</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-sky-700">
+                <ChevronDownIcon className="h-5 w-5" aria-hidden="true" />
+              </div>
+            </div>
+            {/* Shred Button */}
             <button
               onClick={handleShred}
               disabled={loading || !yaml.trim()}
-              className="shred-btn"
-              style={{ minWidth: 110, fontSize: 17 }}
+              className="rounded border-none bg-gradient-to-r from-sky-500 to-cyan-400 px-6 py-2 text-base font-semibold text-white shadow-sm transition hover:bg-gradient-to-r hover:from-sky-700 hover:to-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Shredding..." : "Shred it"}
             </button>
+            {/* Copy Button */}
             <button
               onClick={handleCopy}
               disabled={!code.trim()}
-              className={`copy-btn${copied ? ' bg-green-500' : ''}`}
-              style={{ minWidth: 130, fontSize: 17 }}
+              className={`flex items-center justify-center rounded border border-sky-200 bg-sky-50 px-6 py-2 text-base font-semibold text-sky-600 shadow-sm transition hover:bg-sky-200 hover:text-sky-800 disabled:opacity-50 disabled:cursor-not-allowed ${copied ? ' bg-green-100 text-green-800 border-green-300 hover:bg-green-200' : ''}`}
             >
-              {copied ? 'Copied!' : 'Copy Dagger code'}
+              <ClipboardDocumentIcon className={`h-5 w-5 mr-2 ${copied ? 'text-green-800' : 'text-sky-600'}`} />
+              <span>{copied ? 'Copied!' : 'Copy Dagger code'}</span>
             </button>
-            <a href={DOC_LINKS[language]} target="_blank" rel="noopener noreferrer" style={{ fontSize: 16, color: '#191826', textDecoration: 'underline', alignSelf: 'center', marginLeft: 10, fontWeight: 600 }}>Dagger docs</a>
+            <a href={DOC_LINKS[language]} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-sky-600 underline hover:text-sky-800 ml-2 self-center">Dagger docs</a>
           </div>
           {/* LOC Saved and Error Feedback */}
           {typeof locSaved === "number" && yamlLoc && yamlLoc > 0 && (
@@ -176,6 +210,28 @@ export default function Home() {
           <a href="https://github.com/gkogan/yaml-shredder" target="_blank" rel="noopener noreferrer">View on GitHub</a>
         </footer>
       </main>
-    </ErrorBoundary>
+    </div>
   );
+}
+
+export async function getStaticProps() {
+  const samplesDir = path.join(process.cwd(), 'samples'); // Use path.join for cross-platform compatibility
+
+  const basicYamlPath = path.join(samplesDir, 'basic.yaml');
+  const intermediateYamlPath = path.join(samplesDir, 'intermediate.yaml');
+  const gnarlyYamlPath = path.join(samplesDir, 'gnarly.yaml');
+
+  // Use fs.readFile to read the file content as strings
+  const basicYaml = await fs.promises.readFile(basicYamlPath, 'utf8');
+  const intermediateYaml = await fs.promises.readFile(intermediateYamlPath, 'utf8');
+  const gnarlyYaml = await fs.promises.readFile(gnarlyYamlPath, 'utf8');
+
+  return {
+    props: {
+      // Pass the string content directly
+      basicYaml,
+      intermediateYaml,
+      gnarlyYaml,
+    },
+  };
 }

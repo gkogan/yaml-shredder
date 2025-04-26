@@ -1,0 +1,210 @@
+# More Complex Monorepo CI/CD with Multiple Services, Change Detection, Staging/Prod Environments
+name: Gnarly Monorepo CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    name: Setup Workspace
+    runs-on: ubuntu-latest
+    outputs:
+      node-cache-key: ${{ steps.cache-node.outputs.cache-hit }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get npm cache directory
+        id: npm-cache-dir
+        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
+
+      - name: Cache Node Modules
+        id: cache-node
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+  detect_changes:
+    name: Detect Changed Projects
+    runs-on: ubuntu-latest
+    needs: setup
+    outputs:
+      changed-projects: ${{ steps.filter.outputs.changes }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for change detection
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Using a hypothetical change detection tool/script
+      # In reality, you might use nx, turbo, lerna, or custom script
+      - name: Detect changed packages
+        id: filter
+        # This is a placeholder - replace with your actual change detection logic
+        run: |
+          echo "Simulating change detection..."
+          # Example: Assume 'srv_web' and 'pkg_utils' changed if PR target is develop
+          if [ "${{ github.base_ref }}" == "develop" ]; then
+            echo 'changes=["srv_web", "pkg_utils"]' >> $GITHUB_OUTPUT
+          # Example: Assume 'srv_api' changed if push to main
+          elif [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo 'changes=["srv_api"]' >> $GITHUB_OUTPUT
+          else
+            # Default: Assume all projects with a build script changed for simplicity
+            echo 'changes=["srv_web", "srv_api", "pkg_utils"]' >> $GITHUB_OUTPUT
+          fi
+
+  lint:
+    name: Lint Changed Projects
+    runs-on: ubuntu-latest
+    needs: [setup, detect_changes]
+    if: needs.detect_changes.outputs.changed-projects != '[]'
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect_changes.outputs.changed-projects) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and Restore Cache
+        uses: ./.github/actions/setup-node # Reusable action
+        with:
+          cache-key: ${{ needs.setup.outputs.node-cache-key }}
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Lint ${{ matrix.project }}
+        run: npx turbo run lint --filter=${{ matrix.project }}...
+
+  test:
+    name: Test Changed Projects
+    runs-on: ubuntu-latest
+    needs: [setup, detect_changes]
+    if: needs.detect_changes.outputs.changed-projects != '[]'
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect_changes.outputs.changed-projects) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and Restore Cache
+        uses: ./.github/actions/setup-node
+        with:
+          cache-key: ${{ needs.setup.outputs.node-cache-key }}
+
+      - run: npm ci
+
+      - name: Test ${{ matrix.project }}
+        run: npx turbo run test --filter=${{ matrix.project }}...
+
+  build:
+    name: Build Changed Projects
+    runs-on: ubuntu-latest
+    needs: [setup, detect_changes]
+    if: needs.detect_changes.outputs.changed-projects != '[]'
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect_changes.outputs.changed-projects) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and Restore Cache
+        uses: ./.github/actions/setup-node
+        with:
+          cache-key: ${{ needs.setup.outputs.node-cache-key }}
+
+      - run: npm ci
+
+      - name: Build ${{ matrix.project }}
+        run: npx turbo run build --filter=${{ matrix.project }}...
+
+      - name: Upload Build Artifact (${{ matrix.project }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.project }}-${{ github.sha }}
+          path: packages/${{ matrix.project }}/dist # Adjust path as needed
+
+  deploy_staging:
+    name: Deploy Web App to Staging
+    runs-on: ubuntu-latest
+    needs: [build, detect_changes]
+    # Deploy web app if it changed and branch is develop
+    if: contains(needs.detect_changes.outputs.changed-projects, 'srv_web') && github.ref == 'refs/heads/develop'
+    environment: staging
+    steps:
+      - name: Download Web App Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-srv_web-${{ github.sha }}
+          path: ./deploy
+      - name: Deploy to Staging Environment
+        run: echo "Deploying web app from ./deploy to staging..."
+        # Add actual deployment command here (e.g., using aws s3 sync, gcloud app deploy, etc.)
+
+  deploy_production:
+    name: Deploy Services to Production
+    runs-on: ubuntu-latest
+    needs: [build, detect_changes]
+    # Deploy web app or api if they changed and branch is main
+    if: (contains(needs.detect_changes.outputs.changed-projects, 'srv_web') || contains(needs.detect_changes.outputs.changed-projects, 'srv_api')) && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Download API Artifact
+        if: contains(needs.detect_changes.outputs.changed-projects, 'srv_api')
+        uses: actions/download-artifact@v4
+        with:
+          name: build-srv_api-${{ github.sha }}
+          path: ./deploy/api
+
+      - name: Download Web App Artifact
+        if: contains(needs.detect_changes.outputs.changed-projects, 'srv_web')
+        uses: actions/download-artifact@v4
+        with:
+          name: build-srv_web-${{ github.sha }}
+          path: ./deploy/web
+
+      - name: Deploy to Production Environment
+        run: echo "Deploying services from ./deploy to production..."
+        # Add actual deployment command here
+
+  notify_failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'push'
+    needs: [lint, test, build, deploy_staging, deploy_production]
+    steps:
+      - name: Send Slack Notification
+        run: |
+          echo "Build/Deploy failed for ref ${{ github.ref }}: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        # Add actual Slack notification action here
